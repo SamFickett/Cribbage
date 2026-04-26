@@ -7,7 +7,7 @@ suits the web application. All globals are removed, as well as
 print() and input().
 """
 
-import numpy as np
+# import numpy as np
 import random
 from itertools import combinations
 
@@ -39,20 +39,47 @@ class CribbageGame:
         if self.state == GameState.START:
             self.start_game()
             self.state = GameState.DEAL
+
         elif self.state == GameState.DEAL:
             self.start_round()
             self.state = GameState.DISCARD
+
         elif self.state == GameState.DISCARD:
-            # wait for user_discard()
-            pass
+            if len(self.hand_crib) == 4:
+                self.state = GameState.CUT
+
         elif self.state == GameState.CUT:
-            self.cut()
-            self.state = GameState.PEGGING
+            pass
+
+        elif self.state == GameState.PEGGING:
+            pass
+
+
+        return {
+            "state": self.state,
+            "user_hand": self.hand_user,
+            "cpu_hand": self.hand_cpu,
+            "crib": self.hand_crib,
+            "cut_card": getattr(self, "cut_card", None),
+            "user_pts": self.user_pts,
+            "cpu_pts": self.cpu_pts
+        }
+
+    def reset_round(self):
+        self.hand_cpu = []
+        self.hand_user = []
+        self.hand_crib = []
+        self.in_play = []
+        self.count = 0
+        self.cut_card = None
+
+        self.state = GameState.START
 
     def __init__(self):
         self.hand_cpu = []
         self.hand_user = []
         self.hand_crib = []
+        self.deck = []
 
         self.user_pts = 0
         self.cpu_pts = 0
@@ -66,16 +93,13 @@ class CribbageGame:
     # Game Flow
     def start_game(self):
         self.user_crib = random.choice([True, False])
-
-        return 0
        
     def start_round(self):
-        deck = self.create_deck()
-        random.shuffle(deck)
+        if self.state != GameState.DEAL:
+            raise Exception("Invalid state for dealing")
 
-        for _ in range(6):
-            self.hand_cpu.append(deck.pop())
-            self.hand_user.append(deck.pop())
+        self.deck = self.create_deck()
+        random.shuffle(self.deck)
 
         self.hand_cpu = []
         self.hand_user = []
@@ -83,17 +107,69 @@ class CribbageGame:
         self.in_play = []
         self.count = 0
 
-        return 0
+        for _ in range(6):
+            self.hand_cpu.append(self.deck.pop())
+            self.hand_user.append(self.deck.pop())
+
+        return {
+            "hand_user": self.hand_user,
+            "hand_cpu": self.hand_cpu,
+            "state": self.state
+        }
 
     # Crib
     def cpu_discard(self):
-        return 0
+        if not self.hand_cpu:
+            raise Exception("CPU hand is empty")
+
+        random.shuffle(self.hand_cpu)
+        discarded = self.hand_cpu[:2]
+        self.hand_cpu = self.hand_cpu[2:]
+        self.hand_crib.extend(discarded)
+
+        return {
+            "hand_cpu": self.hand_cpu,
+            "hand_crib": self.hand_crib,
+            "state": self.state
+        }
 
     def user_discard(self, indices):
-        return 0
+        if not self.hand_user:
+            raise Exception("User hand is empty")
+
+        removed = []
+
+        for i in sorted(indices, reverse = True):
+            removed.append(self.hand_user.pop(i))
+
+        self.hand_crib.extend(removed)
+        self.state = GameState.CUT
+
+        return {
+            "hand_user": self.hand_user,
+            "hand_cpu": self.hand_cpu,
+            "hand_crib": self.hand_crib,
+            "state": self.state
+        }
 
     def cut(self):
-        return 0
+        self.cut_card = self.deck.pop()
+
+        if self.cut_card[0] == "J":
+            if self.user_crib:
+                self.user_pts += 2
+            else:
+                self.cpu_pts += 2
+        
+        self.state = GameState.PEGGING
+
+        # return self.cut_card
+        return {
+            "cut_card": self.cut_card,
+            "user_pts": self.user_pts,
+            "cpu_pts": self.cpu_pts,
+            "state": self.state
+        }
 
     # Pegging
     def play_user_card(self, index):
