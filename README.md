@@ -18,3 +18,12 @@ Changes from Original:
 - Removal of input() and print()
     - Debug print() still exist for testing
 - Functional as far as the Cut, Pegging/Scoring not implemented yet
+
+## Progress Day 2 (5-10-2026)
+
+Finished rough version of game.py
+All tests inside of test.py return as expected
+
+Next:
+-Verify Game Logic
+-Add CPU "AI" (Decision Logic)
