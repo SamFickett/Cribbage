@@ -25,5 +25,5 @@ Finished rough version of game.py
 All tests inside of test.py return as expected
 
 Next:
--Verify Game Logic
--Add CPU "AI" (Decision Logic)
+- Verify Game Logic
+- Add CPU "AI" (Decision Logic)
