@@ -41,34 +41,51 @@ class CribbageGame:
             self.start_game()
             self.state = GameState.DEAL
 
+            return self.build_state(last_action = {
+                "type": "start_game",
+                "dealer": self.dealer
+            })
+
         elif self.state == GameState.DEAL:
             self.start_round()
             self.state = GameState.DISCARD
+
+            return self.build_state(last_action = {
+                "type": "deal",
+                "dealer": self.dealer,
+                "user_crib": self.user_crib
+            })
 
         elif self.state == GameState.DISCARD:
             if len(self.hand_crib) == 4:
                 self.state = GameState.CUT
 
+                return self.build_state(last_action = {
+                    "type": "discard_complete",
+                    "crib": self.hand_crib
+                })
+
         elif self.state == GameState.CUT:
-            pass
+            return self.build_state(last_action = {
+                "type": "awaiting_cut"
+            })
 
         elif self.state == GameState.PEGGING:
-            pass
+            return self.build_state(last_action = {
+                "type": "awaiting_pegging",
+                "current_turn": self.current_turn
+            })
 
         elif self.state == GameState.SCORING:
             result = self.score_round()
-            self.reset_round()
-            return result
+            self.end_round()
 
-        return {
-            "state": self.state,
-            "user_hand": self.hand_user,
-            "cpu_hand": self.hand_cpu,
-            "crib": self.hand_crib,
-            "cut_card": getattr(self, "cut_card", None),
-            "user_pts": self.user_pts,
-            "cpu_pts": self.cpu_pts
-        }
+            return self.build_state(last_action = {
+                "type": "round_score",
+                "result": result
+            })
+
+        return self.build_state()
 
     def swap_crib(self):
         if self.dealer == "USER":
@@ -131,27 +148,88 @@ class CribbageGame:
             self.hand_cpu.append(self.deck.pop())
             self.hand_user.append(self.deck.pop())
 
+        self.round_state = {
+            "user_hand": self.hand_user.copy(),
+            "cpu_hand": self.hand_cpu.copy(),
+            "crib": self.hand_crib.copy(),
+            "cut_card": None
+        }
+
         return {
             "hand_user": self.hand_user,
             "hand_cpu": self.hand_cpu,
             "state": self.state
         }
 
+    def end_round(self):
+        self.swap_crib()
+        self.reset_round()
+        self.round_state = None
+
     # Crib
     def cpu_discard(self):
         if not self.hand_cpu:
             raise Exception("CPU hand is empty")
+        
+        possible_hands = combinations(self.hand_cpu, 4)
 
-        random.shuffle(self.hand_cpu)
-        discarded = self.hand_cpu[:2]
-        self.hand_cpu = self.hand_cpu[2:]
-        self.hand_crib.extend(discarded)
+        best_score = -1
+        best_hand = None
+        
+        # Evaluate for best possible hand
+        for hand in possible_hands:
+            score = self.eval_hand(list(hand))
 
-        return {
-            "hand_cpu": self.hand_cpu,
-            "hand_crib": self.hand_crib,
-            "state": self.state
-        }
+            if score > best_score:
+                best_score = score
+                best_hand = list(hand)
+
+        # Discard
+        remaining = best_hand.copy()
+        discard = []
+
+        for card in self.hand_cpu:
+            if card in remaining:
+                remaining.remove(card)
+            else:
+                discard.append(card)
+
+        self.hand_cpu = best_hand
+        self.hand_crib.extend(discard)
+
+        self.round_state["cpu_hand"] = self.hand_cpu.copy()
+
+        return self.build_state(last_action = {
+            "type": "discard",
+            "player": "CPU",
+            "cards": discard
+        })
+
+    # CPU Discard logic
+    def eval_hand(self, cards):
+        score = 0
+        values = [self.scard_value(card) for card in cards]
+
+        # Value 15's the highest
+        for value in values:
+            if value == 5:
+                score += 5
+            elif value >= 10:
+                score += 2
+
+        # Pairs next
+        counts = Counter(values)
+        for count in counts.values():
+            if count == 2:
+                score += 3
+
+        # Potential Runs last
+        sorted_vals = sorted(values)
+        for i in range(len(sorted_vals) - 1):
+            if sorted_vals[i + 1] - sorted_vals[i] == 1:
+                score += 2
+        
+        return score
 
     def user_discard(self, indices):
         if not self.hand_user:
@@ -163,14 +241,17 @@ class CribbageGame:
             removed.append(self.hand_user.pop(i))
 
         self.hand_crib.extend(removed)
+
+        self.round_state["user_hand"] = self.hand_user.copy()
+        self.round_state["crib"] = self.hand_crib.copy()
+
         self.state = GameState.CUT
 
-        return {
-            "hand_user": self.hand_user,
-            "hand_cpu": self.hand_cpu,
-            "hand_crib": self.hand_crib,
-            "state": self.state
-        }
+        return self.build_state(last_action = {
+            "type": "discard",
+            "player": "USER",
+            "cards": removed
+        })
 
     # Cut
     def cut(self):
@@ -189,14 +270,14 @@ class CribbageGame:
 
         self.state = GameState.PEGGING
 
-        # return self.cut_card
-        return {
-            "cut_card": self.cut_card,
-            "user_pts": self.user_pts,
-            "cpu_pts": self.cpu_pts,
-            "state": self.state
-        }
+        self.round_state["cut_card"] = self.cut_card
 
+        # return self.cut_card
+        return self.build_state(last_action = {
+            "type": "cut",
+            "card": self.cut_card,
+            "points_scored": 2 if self.cut_card[0] == "J" else 0
+        })
 
     # Pegging
     def play_user_card(self, index):
@@ -205,24 +286,27 @@ class CribbageGame:
             if self.can_play(self.hand_cpu):
                 self.current_turn = "CPU"
 
-                return {
-                    "message": "User goes",
-                    "count": self.count,
-                }
+                return self.build_state(last_action = {
+                "type": "go",
+                "player": "USER",
+                "reason": "no playable cards"
+                })
             
             self.last_card_pts()
             self.reset_pegging()
 
-        # REMOVE LATER
-        playable = self.playable_cards(self.hand_user)
-        card = playable.pop(0)
-        # card = self.hand_user[index]
+            return self.build_state(last_action = {
+                "type": "go_reset",
+                "player": "USER",
+                "reason": "no playable cards"
+            })
 
+        card = self.hand_user[index]
         if not self.is_valid_card(card):
             return {
                 "error": "Card exceeds 31"
             }
-        
+
         self.hand_user.remove(card)
 
         self.in_play.append(card)
@@ -233,14 +317,17 @@ class CribbageGame:
 
         score = self.score_pegging()
 
-        return {
-            "played_card": card,
-            "count": self.count,
-            "in_play": self.in_play,
-            "hand_user": self.hand_user,
-            "score": score,
-            "user_pts": self.user_pts
-        }
+        return self.build_state(last_action = {
+            "type": "play_card",
+            "player": self.last_player,
+            "card": card,
+            "count_after": self.count,
+            "points_scored": score["points_scored"]
+        })
+    
+    # User helper function (UI Helper)
+    def get_playable_indices(self, hand):
+            return [i for i, card in enumerate(hand) if self.is_valid_card(card)] 
 
     def play_cpu_card(self):
         if not self.can_play(self.hand_cpu):
@@ -248,22 +335,25 @@ class CribbageGame:
             if self.can_play(self.hand_user):
                 self.current_turn = "USER"
 
-                return {
-                    "message": "CPU goes",
-                    "count": self.count,
-                }
+                return self.build_state(last_action = {
+                "type": "go",
+                "player": "CPU",
+                "reason": "no playable cards"
+                })
             
             self.last_card_pts()
             self.reset_pegging()
 
-        playable = self.playable_cards(self.hand_cpu)
-        card = playable.pop(0)
-        self.hand_cpu.remove(card)
-        if not self.is_valid_card(card):
-            return {
-                "error": "Card exceeds 31"
-            }
+            return self.build_state(last_action = {
+                "type": "go_reset",
+                "player": "CPU",
+                "reason": "no playable cards"
+            })
 
+        playable = self.playable_cards(self.hand_cpu)
+        card = max(playable, key = self.eval_pegging_card)
+
+        self.hand_cpu.remove(card)
         self.in_play.append(card)
         self.count += self.pcard_value(card)
 
@@ -272,14 +362,28 @@ class CribbageGame:
 
         score = self.score_pegging()
 
-        return {
-            "played_card": card,
-            "count": self.count,
-            "in_play": self.in_play,
-            "hand_cpu": self.hand_cpu,
-            "score": score,
-            "cpu_pts": self.cpu_pts
-        }
+        return self.build_state(last_action = {
+            "type": "play_card",
+            "player": self.last_player,
+            "card": card,
+            "count_after": self.count,
+            "points_scored": score["points_scored"]
+        })
+    
+    def eval_pegging_card(self, card):
+        temp_in_play = self.in_play + [card]
+        score = 0
+
+        if self.check_15(temp_in_play):
+            score += 2
+        
+        score += self.check_pairs(temp_in_play)
+        score += self.check_runs(temp_in_play)
+
+        if self.count + self.pcard_value(card) == 31:
+            score += 2
+
+        return score
 
     def can_play(self, hand):
         for card in hand:
@@ -325,19 +429,23 @@ class CribbageGame:
         else:
             self.cpu_pts += pts
 
+        scorer = self.last_player
         return {
-            "points": pts,
-            "breakdown": breakdown
+            "points_scored": pts,
+            "scorer": scorer
         }
 
     def reset_pegging(self):
         self.in_play.clear()
         self.count = 0
         self.go_player = None
-        self.current_turn = self.last_player
+        # self.current_turn = self.last_player
 
-        if len(self.hand_user) == 0 and len(self.hand_cpu) == 0:
+        if self.pegging_over():
             self.state = GameState.SCORING
+
+    def pegging_over(self):
+        return len(self.hand_user) == 0 and len(self.hand_cpu) == 0
 
     # Helpers
     def check_15(self, in_play):
@@ -380,10 +488,6 @@ class CribbageGame:
             
         return 0
 
-    def is_run(self, cards):
-        values = sorted(self.pcard_value(c) for c in cards)
-        return all(values[i] + 1 == values[i + 1] for i in range(len(values) - 1))
-
     def check_runs(self, in_play):
         values = [self.scard_value(card) for card in in_play]
 
@@ -410,9 +514,9 @@ class CribbageGame:
 
     # Scoring
     def score_round(self):
-        user_score = self.score_hand(self.hand_user, False)
-        cpu_score = self.score_hand(self.hand_cpu, False)
-        crib_score = self.score_hand(self.hand_crib, True)
+        user_score = self.score_hand(self.round_state["user_hand"], False)
+        cpu_score = self.score_hand(self.round_state["cpu_hand"], False)
+        crib_score = self.score_hand(self.round_state["crib"], True)
 
         if self.user_crib:
             self.cpu_pts += cpu_score["total"]
@@ -420,16 +524,13 @@ class CribbageGame:
         else:
             self.user_pts += user_score["total"]
             self.cpu_pts += cpu_score["total"] + crib_score["total"]
-        
-        result = {
-            "user_hand_score": user_score,
-            "cpu_hand_score": cpu_score,
-            "crib_score": crib_score,
-            "user_total_pts": self.user_pts,
-            "cpu_total_pts": self.cpu_pts
-        }
 
-        return result
+        return self.build_state(last_action = {
+            "type": "round_score",
+            "user_scored": user_score,
+            "cpu_scored": cpu_score,
+            "crib_scored": crib_score
+        })
 
     def score_hand(self, hand, is_user_crib):
         total = 0
@@ -537,3 +638,29 @@ class CribbageGame:
                 return 1
             
         return 0
+    
+    # UI Helpers
+    def build_state(self, last_action = None):
+        return {
+            "state": self.state,
+            "turn": self.current_turn,
+
+            "user_hand": self.hand_user,
+            "cpu_hand": self.hand_cpu,
+            "crib": self.hand_crib,
+
+            "count": self.count,
+            "in_play": self.in_play,
+
+            "cut_card": getattr(self, "cut_card", None),
+
+            "user_pts": self.user_pts,
+            "cpu_pts": self.cpu_pts,
+
+            "legal_moves": {
+                "user": self.get_playable_indices(self.hand_user),
+                "cpu": self.get_playable_indices(self.hand_cpu)
+            },
+
+            "last_action": last_action
+        }

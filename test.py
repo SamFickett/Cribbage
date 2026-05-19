@@ -1,109 +1,95 @@
 from game import CribbageGame
 
-def log(title, state):
-    print(f"\n=== {title} ===")
-    for k, v in state.items():
-        print(f"{k}: {v}")
+def log(state):
+    print("\n------------------------------")
+    print("STATE:", state["state"])
+    print("TURN:", state.get("turn"))
+    print("COUNT:", state.get("count"))
+    print("USER PTS:", state.get("user_pts"))
+    print("CPU PTS:", state.get("cpu_pts"))
+    print("IN PLAY:", state.get("in_play"))
+    print("CUT:", state.get("cut_card"))
+    print("LAST ACTION:", state.get("last_action"))
+    print("LEGAL USER:", state["legal_moves"]["user"])
+    print("------------------------------")
 
-def show_hands(game):
-    print("\nUSER:", game.hand_user)
-    print("CPU:", game.hand_cpu)
-    print("CRIB:", game.hand_crib)
-
-def test_deal_phase(game):
-    print("\n\n--- DEAL PHASE TEST ---")
+def run_step(game):
     state = game.step()
-    log("START → DEAL", state)
-    show_hands(game)
-
-    state = game.step()
-    log("DEAL → DISCARD", state)
+    log(state)
     return state
 
-def test_discard_phase(game):
-    print("\n\n--- DISCARD TEST ---")
+def play_user_auto(game):
+    """Automatically plays first legal card"""
+    state = game.build_state()
 
-    game.cpu_discard()
-    state = game.user_discard([0, 3])
+    legal = state["legal_moves"]["user"]
+    if not legal:
+        return game.play_user_card(0)  # will trigger GO logic
 
-    log("After discard", state)
-    show_hands(game)
-    return state
+    return game.play_user_card(legal[0])
 
-def test_cut_phase(game):
-    print("\n\n--- CUT TEST ---")
+def play_cpu_auto(game):
+    return game.play_cpu_card()
 
-    state = game.cut()
-    log("CUT RESULT", state)
-    return state
-
-def test_pegging_simple(game):
-    print("\n\n--- PEGGING TEST (manual plays) ---")
-
-    # Force some simple deterministic plays if possible
-    if game.hand_user:
-        game.play_user_card(0)
-
-    if game.hand_cpu:
-        game.play_cpu_card()
-
-    print("COUNT:", game.count)
-    print("IN PLAY:", game.in_play)
-
-def test_full_round(game):
-    print("\n\n--- FULL ROUND FLOW ---")
-
-    test_deal_phase(game)
-    test_discard_phase(game)
-    test_cut_phase(game)
-
-    # simple pegging simulation loop
-    for _ in range(10):
-        if game.state == "PEGGING":
-            if game.current_turn == "USER" and game.hand_user:
-                game.play_user_card(0)
-            elif game.hand_cpu:
-                game.play_cpu_card()
-        else:
-            break
-
-    print("\nFINAL STATE:", game.state)
-    print("USER PTS:", game.user_pts)
-    print("CPU PTS:", game.cpu_pts)
-
-def test_scoring_direct(game):
-    print("\n\n--- SCORING TEST (forced) ---")
-
-    # force state so we bypass gameplay bugs
-    game.cut_card = "7H"
-    game.hand_user = ["7D", "7S", "8C", "9C"]
-    game.hand_cpu = ["2H", "3H", "4H", "5H"]
-    game.hand_crib = ["6D", "6S", "6C", "JD"]
-
-    result = game.score_round()
-    print(result)
-
-def main():
+def run_full_game():
     game = CribbageGame()
 
-    print("INITIAL STATE:", game.state)
+    print("\n=== START GAME ===")
+    run_step(game)
 
-    # Run modular tests
-    test_deal_phase(game)
-    test_discard_phase(game)
-    test_cut_phase(game)
+    print("\n=== DEAL ===")
+    run_step(game)
 
-    # optional deeper tests
-    test_pegging_simple(game)
+    print("\n=== DISCARD PHASE ===")
+    run_step(game)
 
-    # hard reset test
-    game.reset_round()
+    # CPU discard first (simple simulation)
+    game.cpu_discard()
+    log(game.build_state(last_action={"type": "cpu_discard_test"}))
 
-    # full simulation
-    test_full_round(game)
+    # USER discard (choose first 2 cards)
+    game.user_discard([0, 1])
+    log(game.build_state(last_action={"type": "user_discard_test"}))
 
-    # scoring isolation test
-    test_scoring_direct(game)
+    print("\n=== CUT ===")
+    run_step(game)
+    game.cut()
+    log(game.build_state(last_action={"type": "cut"}))
+
+    print("\n=== PEGGING ===")
+
+    # Pegging loop
+    while game.state == "PEGGING":
+        state = game.build_state()
+
+        if game.current_turn == "USER":
+            result = play_user_auto(game)
+        else:
+            result = play_cpu_auto(game)
+
+        log(result)
+
+    print("\n=== PEGGING COMPLETE ===")
+
+    # Force scoring step
+    game.state = "SCORING"
+    final = run_step(game)
+
+    print("\n=== FINAL RESULT ===")
+    log(final)
+
+def run_single_step_debug():
+    """Useful for debugging step() only"""
+    game = CribbageGame()
+
+    print("\nSTART:")
+    run_step(game)
+
+    print("\nDEAL:")
+    run_step(game)
+
+    print("\nDISCARD STEP:")
+    run_step(game)
 
 if __name__ == "__main__":
-    main()
+    run_full_game()
